@@ -15,6 +15,11 @@ export class ReportsController {
     return this.reportsService.dailySales(date ?? new Date().toISOString().slice(0, 10));
   }
 
+  @Get('daily-sheet')
+  dailySheet(@Query('date') date: string) {
+    return this.reportsService.getDailySheet(date ?? new Date().toISOString().slice(0, 10));
+  }
+
   @Get('sales')
   productSales(@Query('from') from?: string, @Query('to') to?: string) {
     return this.reportsService.productSales(from, to);
@@ -53,5 +58,25 @@ export class ReportsController {
   @Get('supplier-credit')
   supplierCredit() {
     return this.reportsService.supplierDebt();
+  }
+
+  @Get('pl-statement')
+  plStatement(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.reportsService.plStatement(from, to);
+  }
+
+  @Get('balance-sheet')
+  balanceSheet(@Query('asOfDate') asOfDate?: string) {
+    return this.reportsService.balanceSheet(asOfDate);
+  }
+
+  @Get('capital-accounts')
+  capitalAccounts() {
+    return this.reportsService.capitalAccountsSummary();
+  }
+
+  @Get('cash-book')
+  cashBook(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.reportsService.cashBook(from, to);
   }
 }

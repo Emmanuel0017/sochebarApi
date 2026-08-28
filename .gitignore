@@ -1,25 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment variables — never commit real secrets/connection strings
+.env
+.env.local
+.env.*.local
+
+# Prisma
+# (schema.prisma IS tracked; only generated/local artifacts are ignored)
+prisma/*.db
+prisma/migrations/dev.db
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-*.env
+# Testing / coverage
+coverage/
 
-# Editor directories and files
+# IDE / editor
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+
+# OS files
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+
+# Nest / TS build info
+*.tsbuildinfo
+
+# Misc
+.env.backup
+*.pem

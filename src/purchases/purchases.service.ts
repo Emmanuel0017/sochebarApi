@@ -41,9 +41,17 @@ export class PurchasesService {
       const discount = dto.discount ?? 0;
       const tax = dto.tax ?? 0;
       const total = subtotal - discount + tax;
-      const amountPaid = Math.min(dto.amountPaidNow ?? 0, total);
 
-      const paymentStatus = amountPaid <= 0 ? 'CREDIT' : amountPaid < total ? 'PARTIAL' : 'PAID';
+      // A purchase with no supplier has no counterparty to owe, so it can't
+      // be tracked as CREDIT/PARTIAL - treat it as paid in full at receipt.
+      const amountPaid = dto.supplierId ? Math.min(dto.amountPaidNow ?? 0, total) : total;
+      const paymentStatus = !dto.supplierId
+        ? 'PAID'
+        : amountPaid <= 0
+          ? 'CREDIT'
+          : amountPaid < total
+            ? 'PARTIAL'
+            : 'PAID';
 
       const purchase = await tx.purchase.create({
         data: {
@@ -88,37 +96,40 @@ export class PurchasesService {
         );
       }
 
-      // Supplier owes the full purchase total the moment stock is received,
-      // regardless of how much (if anything) was paid immediately.
-      await tx.supplierTransaction.create({
-        data: {
-          supplierId: dto.supplierId,
-          transactionType: 'PURCHASE',
-          amount: total,
-          referenceType: 'PURCHASE',
-          referenceId: purchase.id,
-          purchaseId: purchase.id,
-          description: `Purchase ${purchase.invoiceNumber ?? purchase.id}`,
-        },
-      });
-
-      if (amountPaid > 0) {
+      // Supplier ledger entries only make sense when there's a supplier.
+      if (dto.supplierId) {
+        // Supplier owes the full purchase total the moment stock is received,
+        // regardless of how much (if anything) was paid immediately.
         await tx.supplierTransaction.create({
           data: {
             supplierId: dto.supplierId,
-            transactionType: 'PAYMENT',
-            amount: amountPaid,
+            transactionType: 'PURCHASE',
+            amount: total,
             referenceType: 'PURCHASE',
             referenceId: purchase.id,
             purchaseId: purchase.id,
-            description: `Payment on receipt for ${purchase.invoiceNumber ?? purchase.id}`,
+            description: `Purchase ${purchase.invoiceNumber ?? purchase.id}`,
           },
         });
 
-        // If paid in cash, this should also hit the active cash session -
-        // left as a hook: pass a cashSessionId via a dedicated endpoint if
-        // the payment came out of the till. Bank/mobile-money payments don't
-        // touch the cash session ledger.
+        if (amountPaid > 0) {
+          await tx.supplierTransaction.create({
+            data: {
+              supplierId: dto.supplierId,
+              transactionType: 'PAYMENT',
+              amount: amountPaid,
+              referenceType: 'PURCHASE',
+              referenceId: purchase.id,
+              purchaseId: purchase.id,
+              description: `Payment on receipt for ${purchase.invoiceNumber ?? purchase.id}`,
+            },
+          });
+
+          // If paid in cash, this should also hit the active cash session -
+          // left as a hook: pass a cashSessionId via a dedicated endpoint if
+          // the payment came out of the till. Bank/mobile-money payments don't
+          // touch the cash session ledger.
+        }
       }
 
       await this.auditService.log({
@@ -126,7 +137,7 @@ export class PurchasesService {
         action: 'CREATE_PURCHASE',
         entityType: 'Purchase',
         entityId: purchase.id,
-        newValues: { total, paymentStatus, itemCount: dto.items.length },
+        newValues: { total, paymentStatus, itemCount: dto.items.length, supplierId: dto.supplierId ?? null },
       });
 
       return purchase;
@@ -136,6 +147,9 @@ export class PurchasesService {
   async pay(id: string, amount: number, actorId: string) {
     return this.prisma.$transaction(async (tx) => {
       const purchase = await tx.purchase.findUniqueOrThrow({ where: { id } });
+      if (!purchase.supplierId) {
+        throw new Error('This purchase has no supplier attached, so there is nothing to pay off');
+      }
       const newAmountPaid = Number(purchase.amountPaid) + amount;
       const paymentStatus = newAmountPaid >= Number(purchase.total) ? 'PAID' : 'PARTIAL';
 

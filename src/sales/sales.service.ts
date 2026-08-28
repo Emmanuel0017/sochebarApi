@@ -4,6 +4,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { CashService } from '../cash/cash.service';
 import { CustomersService } from '../customers/customers.service';
 import { AuditService } from '../audit/audit.service';
+import { localEndOfDay, localStartOfDay } from '../common/date-range.util';
 import { CreateSaleDto, VoidSaleDto } from './dto/sale.dto';
 
 @Injectable()
@@ -23,10 +24,18 @@ export class SalesService {
         userId: params.userId,
         saleDate:
           params.from || params.to
-            ? { gte: params.from ? new Date(params.from) : undefined, lte: params.to ? new Date(params.to) : undefined }
+            ? {
+                gte: params.from ? localStartOfDay(params.from) : undefined,
+                lte: params.to ? localEndOfDay(params.to) : undefined,
+              }
             : undefined,
       },
-      include: { items: true, payments: true, customer: true, user: { select: { id: true, name: true } } },
+      include: {
+        items: { include: { product: true } },
+        payments: true,
+        customer: true,
+        user: { select: { id: true, name: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -59,7 +68,18 @@ export class SalesService {
    */
   async create(dto: CreateSaleDto, actorId: string, actorRole: string) {
     return this.prisma.$transaction(async (tx) => {
-      const subtotal = dto.items.reduce((sum, i) => sum + i.quantity * i.unitPrice - (i.discount ?? 0), 0);
+      const items = dto.items ?? [];
+      const hasItems = items.length > 0;
+
+      if (!hasItems && !dto.manualTotal) {
+        throw new BadRequestException(
+          'Provide either item lines or a manualTotal - a sale/bill needs one or the other',
+        );
+      }
+
+      const subtotal = hasItems
+        ? items.reduce((sum, i) => sum + i.quantity * i.unitPrice - (i.discount ?? 0), 0)
+        : dto.manualTotal!;
       const discount = dto.discount ?? 0;
       const tax = dto.tax ?? 0;
       const total = subtotal - discount + tax;
@@ -81,7 +101,14 @@ export class SalesService {
 
       // Validate stock for every line BEFORE decreasing anything, so a
       // shortage on item 3 doesn't leave items 1-2 already decremented.
-      for (const item of dto.items) {
+      // Skipped entirely for item-less (manualTotal) bills - there's no
+      // stock effect to validate.
+      // NOTE for backdated sales: this checks CURRENT total stock, not stock
+      // as it stood on the backdated date. Entering a past sale still keeps
+      // today's running total correct (it posts a real ledger entry), but if
+      // stock has since been sold below what was available on that past day,
+      // this can't detect that - there's no point-in-time stock check here.
+      for (const item of items) {
         const unit = await tx.productUnit.findUniqueOrThrow({ where: { id: item.unitId } });
         const requiredBase = item.quantity * Number(unit.quantityInBaseUnit);
         await this.inventoryService.assertSufficientStock(item.productId, requiredBase, tx as any);
@@ -89,10 +116,23 @@ export class SalesService {
 
       const invoiceNumber = await this.generateInvoiceNumber(tx);
 
-      // Attach the cashier's currently open cash session, if any (a cash sale
-      // with no open session is itself worth flagging, but we don't block it -
-      // BARTENDER/CASHIER role enforcement happens at the controller level).
-      const cashSession = await tx.cashSession.findFirst({ where: { userId: actorId, status: 'OPEN' } });
+      // A sale is "backdated" when a past saleDate was explicitly given.
+      // Backdated sales don't attach to today's open cash session - that
+      // cash wasn't actually counted in today's till, so pulling it in
+      // would corrupt today's reconciliation. They also post their
+      // inventory ledger entries as of that past date, not "now", so
+      // day-scoped reports (Sales list, Product sales, the daily sheet)
+      // show them on the day they belong to.
+      // "Today" in the business's local timezone (not the server's), so a
+      // sale entered as today's date is never mistakenly treated as
+      // backdated just because the server clock disagrees.
+      const todayLocalStr = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const resolvedSaleDate = dto.saleDate ? localStartOfDay(dto.saleDate) : new Date();
+      const isBackdated = !!dto.saleDate && dto.saleDate !== todayLocalStr;
+
+      const cashSession = isBackdated
+        ? null
+        : await tx.cashSession.findFirst({ where: { userId: actorId, status: 'OPEN' } });
 
       const sale = await tx.sale.create({
         data: {
@@ -100,26 +140,30 @@ export class SalesService {
           userId: actorId,
           customerId: dto.customerId,
           cashSessionId: cashSession?.id,
+          saleDate: resolvedSaleDate,
           subtotal,
           discount,
           tax,
           total,
           status: 'COMPLETED',
-          items: {
-            create: dto.items.map((i) => ({
-              productId: i.productId,
-              unitId: i.unitId,
-              quantity: i.quantity,
-              unitPrice: i.unitPrice,
-              discount: i.discount ?? 0,
-              total: i.quantity * i.unitPrice - (i.discount ?? 0),
-            })),
-          },
+          items: hasItems
+            ? {
+                create: items.map((i) => ({
+                  productId: i.productId,
+                  unitId: i.unitId,
+                  quantity: i.quantity,
+                  unitPrice: i.unitPrice,
+                  discount: i.discount ?? 0,
+                  total: i.quantity * i.unitPrice - (i.discount ?? 0),
+                })),
+              }
+            : undefined,
           payments: {
             create: dto.payments.map((p) => ({
               paymentMethod: p.paymentMethod,
               amount: p.amount,
               reference: p.reference,
+              paidAt: resolvedSaleDate,
               createdById: actorId,
             })),
           },
@@ -127,8 +171,8 @@ export class SalesService {
         include: { items: true, payments: true },
       });
 
-      // Decrease inventory for every line item.
-      for (const item of dto.items) {
+      // Decrease inventory for every line item (no-op for item-less bills).
+      for (const item of items) {
         await this.inventoryService.recordMovement(
           {
             productId: item.productId,
@@ -139,6 +183,7 @@ export class SalesService {
             referenceId: sale.id,
             saleId: sale.id,
             createdById: actorId,
+            occurredAt: isBackdated ? resolvedSaleDate : undefined,
           },
           tx as any,
         );
@@ -186,7 +231,7 @@ export class SalesService {
         action: 'CREATE_SALE',
         entityType: 'Sale',
         entityId: sale.id,
-        newValues: { total, invoiceNumber, itemCount: dto.items.length },
+        newValues: { total, invoiceNumber, itemCount: items.length, isFreeformBill: !hasItems },
       });
 
       return sale;

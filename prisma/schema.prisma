@@ -149,6 +149,7 @@ model User {
   wastageRecorded    Wastage[]                @relation("wastage_recorded_by")
   wastageApproved    Wastage[]                @relation("wastage_approved_by")
   pricesCreated      ProductPrice[]
+  emptyBottleTxns    EmptyBottleTransaction[]
 
   @@map("users")
 }
@@ -177,6 +178,7 @@ model Product {
   barcode        String?  @unique
   description    String?
   trackInventory Boolean  @default(true)
+  tracksEmptyBottles Boolean @default(false)
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -188,6 +190,7 @@ model Product {
   inventoryTxns     InventoryTransaction[]
   stockAdjustments  StockAdjustment[]
   wastage           Wastage[]
+  emptyBottleTxns   EmptyBottleTransaction[]
 
   @@map("products")
 }
@@ -257,8 +260,8 @@ model Supplier {
 
 model Purchase {
   id             String                @id @default(uuid())
-  supplierId     String
-  supplier       Supplier              @relation(fields: [supplierId], references: [id])
+  supplierId     String?
+  supplier       Supplier?             @relation(fields: [supplierId], references: [id])
   invoiceNumber  String?
   purchaseDate   DateTime              @default(now())
 
@@ -558,6 +561,131 @@ model CustomerTransaction {
   createdAt       DateTime                 @default(now())
 
   @@map("customer_transactions")
+}
+
+enum EmptyBottleTransactionType {
+  COLLECTED
+  RETURNED_TO_SUPPLIER
+  BROKEN
+  ADJUSTMENT
+}
+
+model EmptyBottleTransaction {
+  id              String                     @id @default(uuid())
+  productId       String
+  product         Product                    @relation(fields: [productId], references: [id])
+  transactionType EmptyBottleTransactionType
+  // signed: positive = more empties on hand (collected), negative = fewer (returned/broken)
+  quantity        Int
+  notes           String?
+  createdById     String
+  createdBy       User                       @relation(fields: [createdById], references: [id])
+  createdAt       DateTime                   @default(now())
+
+  @@index([productId, createdAt])
+  @@map("empty_bottle_transactions")
+}
+
+// ============================================================
+// EQUITY / CAPITAL / FIXED ASSETS / CASH BOOK
+// (mirrors the bar's manual "capital accounts", "expenditure",
+// and "cash"/"banked cash" workbook sheets)
+// ============================================================
+
+enum CapitalTransactionType {
+  CONTRIBUTION // partner put money/stock into the business
+  DRAWING      // partner took money/goods out
+}
+
+model Partner {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  capitalTransactions CapitalTransaction[]
+
+  @@map("partners")
+}
+
+model CapitalTransaction {
+  id              String                 @id @default(uuid())
+  partnerId       String
+  partner         Partner                @relation(fields: [partnerId], references: [id])
+  transactionType CapitalTransactionType
+  description     String
+  amount          Decimal                @db.Decimal(14, 2)
+  transactionDate DateTime               @default(now())
+  createdById     String
+  createdAt       DateTime               @default(now())
+
+  @@index([partnerId, transactionDate])
+  @@map("capital_transactions")
+}
+
+// One-off capital expenditure (furniture, plumbing/renovation, deposits) -
+// distinct from day-to-day operating Expense records. Feeds the Balance
+// Sheet's Non-Current Assets, not the P&L.
+model FixedAsset {
+  id           String   @id @default(uuid())
+  name         String
+  cost         Decimal  @db.Decimal(14, 2)
+  acquiredDate DateTime @default(now())
+  notes        String?
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  @@map("fixed_assets")
+}
+
+enum CashAccountType {
+  BANK
+  MOBILE_MONEY
+  PETTY_CASH
+}
+
+// A company-wide cash/bank account (as opposed to CashSession, which is a
+// single cashier's till/shift). Balances are derived from CashAccountTransaction.
+model CashAccount {
+  id        String          @id @default(uuid())
+  name      String          @unique // e.g. "Bank", "Airtel Money", "Petty Cash"
+  type      CashAccountType
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now())
+
+  transactions CashAccountTransaction[]
+
+  @@map("cash_accounts")
+}
+
+enum CashAccountTransactionType {
+  CAPITAL_IN      // partner contribution landing in this account
+  SALE            // cash sales banked/collected into this account
+  BILL_PAYMENT    // customer credit payment received into this account
+  PURCHASE        // stock purchase paid from this account
+  EXPENSE         // operating expense paid from this account
+  TRANSFER_IN     // e.g. petty cash banked -> Bank
+  TRANSFER_OUT
+  ADJUSTMENT
+}
+
+model CashAccountTransaction {
+  id              String                      @id @default(uuid())
+  cashAccountId   String
+  cashAccount     CashAccount                 @relation(fields: [cashAccountId], references: [id])
+  transactionType CashAccountTransactionType
+  // signed: positive = money in, negative = money out
+  amount          Decimal                     @db.Decimal(14, 2)
+  description     String?
+  referenceType   ReferenceType?
+  referenceId     String?
+  transactionDate DateTime                    @default(now())
+  createdById     String
+  createdAt       DateTime                    @default(now())
+
+  @@index([cashAccountId, transactionDate])
+  @@map("cash_account_transactions")
 }
 
 // ============================================================

@@ -16,6 +16,11 @@ export interface RecordMovementParams {
   purchaseId?: string;
   saleId?: string;
   createdById: string;
+  // Overrides when this ledger entry is dated as having happened - used for
+  // backdated/catch-up sales so the stock movement lands on the right day
+  // in day-scoped reports (e.g. the daily reconciliation sheet). Defaults
+  // to now when omitted.
+  occurredAt?: Date;
 }
 
 const STOCK_OUT_TYPES: InventoryTransactionType[] = ['SALE', 'WASTAGE', 'DAMAGE', 'TRANSFER_OUT'];
@@ -59,6 +64,7 @@ export class InventoryService {
         saleId: params.saleId,
         unitCost: params.unitCost,
         createdById: params.createdById,
+        createdAt: params.occurredAt,
       },
     });
   }

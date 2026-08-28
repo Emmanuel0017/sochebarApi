@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { localDayBounds } from '../common/date-range.util';
 
 interface LogParams {
   userId?: string;
@@ -29,15 +30,18 @@ export class AuditService {
     });
   }
 
-  async findAll(params: { entityType?: string; entityId?: string; userId?: string; take?: number; skip?: number }) {
+  async findAll(params: { entityType?: string; entityId?: string; userId?: string; date?: string; take?: number; skip?: number }) {
+    const createdAt = params.date ? localDayBounds(params.date) : undefined;
+
     return this.prisma.auditLog.findMany({
       where: {
         entityType: params.entityType,
         entityId: params.entityId,
         userId: params.userId,
+        createdAt,
       },
       orderBy: { createdAt: 'desc' },
-      take: params.take ?? 100,
+      take: params.take ?? 200,
       skip: params.skip ?? 0,
       include: { user: { select: { id: true, name: true, username: true } } },
     });

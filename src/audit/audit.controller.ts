@@ -15,7 +15,8 @@ export class AuditController {
     @Query('entityType') entityType?: string,
     @Query('entityId') entityId?: string,
     @Query('userId') userId?: string,
+    @Query('date') date?: string,
   ) {
-    return this.auditService.findAll({ entityType, entityId, userId });
+    return this.auditService.findAll({ entityType, entityId, userId, date });
   }
 }
