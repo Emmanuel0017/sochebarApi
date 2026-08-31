@@ -40,3 +40,6 @@ Thumbs.db
 # Misc
 .env.backup
 *.pem
+
+#ignores scripts folder
+scripts/
