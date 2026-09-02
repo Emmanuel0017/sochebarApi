@@ -4,7 +4,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProductsService } from './products.service';
-import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
+import { CreateProductDto, DeactivateProductDto, DeleteProductDto, UpdateProductDto } from './dto/product.dto';
 
 @Controller('products')
 @UseGuards(JwtAuthGuard)
@@ -48,10 +48,28 @@ export class ProductsController {
     return this.productsService.update(id, dto, user.id);
   }
 
+  // Hide from POS/lists but keep every past record intact - available to
+  // managers as well as admins, same as before.
+  @Post(':id/deactivate')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'MANAGER')
+  deactivate(@Param('id') id: string, @Body() dto: DeactivateProductDto, @CurrentUser() user: any) {
+    return this.productsService.deactivate(id, dto, user.id);
+  }
+
+  @Post(':id/reactivate')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'MANAGER')
+  reactivate(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.productsService.reactivate(id, user.id);
+  }
+
+  // Permanent delete - admin only, and only actually removes the row when
+  // the product has no sales/purchase/stock history (see service for why).
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles('ADMIN')
-  remove(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.productsService.remove(id, user.id);
+  remove(@Param('id') id: string, @Body() dto: DeleteProductDto, @CurrentUser() user: any) {
+    return this.productsService.remove(id, dto, user.id);
   }
 }

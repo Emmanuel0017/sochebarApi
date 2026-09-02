@@ -16,10 +16,6 @@ export interface RecordMovementParams {
   purchaseId?: string;
   saleId?: string;
   createdById: string;
-  // Overrides when this ledger entry is dated as having happened - used for
-  // backdated/catch-up sales so the stock movement lands on the right day
-  // in day-scoped reports (e.g. the daily reconciliation sheet). Defaults
-  // to now when omitted.
   occurredAt?: Date;
 }
 
@@ -29,14 +25,6 @@ const STOCK_OUT_TYPES: InventoryTransactionType[] = ['SALE', 'WASTAGE', 'DAMAGE'
 export class InventoryService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * Records a single stock movement as an immutable ledger entry.
-   * Quantity is converted to the product's base unit and stored SIGNED:
-   * positive = stock increase, negative = stock decrease.
-   * ADJUSTMENT is the only type whose sign is taken directly from the caller
-   * (since an adjustment can go either way) - all other types have a fixed
-   * direction enforced here so callers can't accidentally reverse the sign.
-   */
   async recordMovement(params: RecordMovementParams, client: Tx = this.prisma as any) {
     const unit = await client.productUnit.findUnique({ where: { id: params.unitId } });
     if (!unit) throw new BadRequestException('Invalid unit');
@@ -82,8 +70,12 @@ export class InventoryService {
   async assertSufficientStock(productId: string, requiredBaseQuantity: number, client: Tx = this.prisma as any) {
     const current = await this.getCurrentStock(productId, client);
     if (current < requiredBaseQuantity) {
+      // Fetch the product name to provide a clear, actionable error message
+      const product = await client.product.findUnique({ where: { id: productId } });
+      const productName = product?.name || 'Unknown Product';
+      
       throw new BadRequestException(
-        `Insufficient stock: have ${current}, need ${requiredBaseQuantity}`,
+        `Insufficient stock for "${productName}": have ${current}, need ${requiredBaseQuantity}`,
       );
     }
   }

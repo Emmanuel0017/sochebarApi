@@ -23,7 +23,7 @@ export class PurchasesController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'MANAGER', 'STOREKEEPER')
+  @Roles('ADMIN', 'MANAGER')
   create(@Body() dto: CreatePurchaseDto, @CurrentUser() user: any) {
     return this.purchasesService.create(dto, user.id);
   }

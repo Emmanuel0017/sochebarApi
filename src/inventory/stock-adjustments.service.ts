@@ -70,7 +70,16 @@ export class StockAdjustmentsService {
         action: 'STOCK_ADJUSTMENT',
         entityType: 'StockAdjustment',
         entityId: adjustment.id,
-        newValues: { differenceBase, reason: dto.reason, pendingApproval: !approvedById },
+        newValues: {
+          productName: (await tx.product.findUnique({ where: { id: dto.productId }, select: { name: true } }))?.name,
+          unitName: unit.name,
+          systemQuantity: currentStockBase,
+          physicalQuantity: physicalBase,
+          differenceBase,
+          reason: dto.reason,
+          notes: dto.notes,
+          pendingApproval: !approvedById,
+        },
       });
 
       return { ...adjustment, pendingApproval: !approvedById };
@@ -103,6 +112,10 @@ export class StockAdjustmentsService {
         action: 'APPROVE_STOCK_ADJUSTMENT',
         entityType: 'StockAdjustment',
         entityId: id,
+        newValues: {
+          productName: (await tx.product.findUnique({ where: { id: adjustment.productId }, select: { name: true } }))?.name,
+          differenceBase: Number(adjustment.difference),
+        },
       });
 
       return adjustment;

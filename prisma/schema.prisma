@@ -443,6 +443,16 @@ model Payment {
   paymentMethod PaymentMethod
   amount        Decimal       @db.Decimal(14, 2)
   reference     String?
+  // Which customer this specific payment line is credited to. Only set (and
+  // required) when paymentMethod = CREDIT. Because a single sale can carry
+  // several CREDIT payment lines, this is what lets ONE sale be split across
+  // MULTIPLE customers' tabs (e.g. a table splitting a bill) instead of a
+  // sale only ever being billable to one customer.
+  customerId    String?
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+  // Optional free-text note shown alongside this payment in the customer's
+  // bill/payment history (e.g. "paid half now, rest Friday").
+  comment       String?
   paidAt        DateTime      @default(now())
   createdById   String
 
@@ -543,6 +553,7 @@ model Customer {
 
   sales                 Sale[]
   customerTransactions  CustomerTransaction[]
+  payments              Payment[]
 
   @@map("customers")
 }
@@ -616,6 +627,12 @@ model CapitalTransaction {
   transactionType CapitalTransactionType
   description     String
   amount          Decimal                @db.Decimal(14, 2)
+  // Matches the extra "capital usage" column in the partners' paper capital
+  // account sheet: of the total `amount` a partner put in/took out, how much
+  // of it was specifically stock/inventory (as opposed to rent, fuel,
+  // fixtures, deposits, etc). Left null when the whole transaction is
+  // non-stock, or when the split simply wasn't recorded.
+  stockValue      Decimal?               @db.Decimal(14, 2)
   transactionDate DateTime               @default(now())
   createdById     String
   createdAt       DateTime               @default(now())

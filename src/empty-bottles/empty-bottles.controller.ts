@@ -23,7 +23,7 @@ export class EmptyBottlesController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'MANAGER', 'STOREKEEPER', 'BARTENDER', 'CASHIER')
+  @Roles('ADMIN', 'MANAGER', 'BARTENDER', 'CASHIER')
   record(@Body() dto: RecordEmptyBottleDto, @CurrentUser() user: any) {
     return this.emptyBottlesService.record(dto, user.id);
   }

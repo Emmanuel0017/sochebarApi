@@ -23,6 +23,17 @@ export class SalePaymentDto {
   @IsEnum(PaymentMethod) paymentMethod: PaymentMethod;
   @IsNumber() @Min(0.01) amount: number;
   @IsOptional() @IsString() reference?: string;
+
+  // Which customer this line is credited to. Required when paymentMethod is
+  // CREDIT (falls back to the sale-level customerId below for older
+  // clients). Each payment line has its own customerId, so a single sale can
+  // carry several CREDIT lines against DIFFERENT customers at once - e.g.
+  // splitting one bill across two people's tabs.
+  @IsOptional() @IsString() customerId?: string;
+
+  // Optional free-text note for this specific payment line, shown alongside
+  // it in the customer's bill/payment history.
+  @IsOptional() @IsString() comment?: string;
 }
 
 export class CreateSaleDto {

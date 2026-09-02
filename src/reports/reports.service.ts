@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { localDayBounds, localEndOfDay } from '../common/date-range.util';
+import { localDayBounds, localEndOfDay, localStartOfDay } from '../common/date-range.util';
 
+// Anchored to Africa/Blantyre (UTC+2), not raw UTC - see date-range.util.ts.
+// `to` is inclusive of the whole day (previously it landed on that day's
+// midnight, silently cutting the last day out of every range report).
 function dateRange(from?: string, to?: string) {
   return {
-    gte: from ? new Date(from) : undefined,
-    lte: to ? new Date(to) : undefined,
+    gte: from ? localStartOfDay(from) : undefined,
+    lte: to ? localEndOfDay(to) : undefined,
   };
 }
 
@@ -337,6 +340,10 @@ export class ReportsService {
       });
 
       const totalSalesQty = salesItems.reduce((sum, item) => sum + Number(item.quantity), 0);
+      // Actual revenue for the day - sums what each sale line was really
+      // charged at, not quantity x today's price (which drifts from the
+      // true total any time prices have changed since).
+      const totalSalesRevenue = salesItems.reduce((sum, item) => sum + Number(item.total), 0);
       const price = p.prices.find((pr) => pr.unitId === baseUnit.id);
 
       items.push({
@@ -347,7 +354,7 @@ export class ReportsService {
         closing,
         sales: totalSalesQty || sales, // Use sales from sale items if available
         price: price ? Number(price.price) : null,
-        total: price ? totalSalesQty * Number(price.price) : 0,
+        total: totalSalesRevenue,
       });
     }
 

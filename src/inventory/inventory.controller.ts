@@ -35,7 +35,7 @@ export class InventoryController {
 
   @Post('adjustments')
   @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'MANAGER', 'STOREKEEPER')
+  @Roles('ADMIN', 'MANAGER')
   createAdjustment(@Body() dto: CreateStockAdjustmentDto, @CurrentUser() user: any) {
     return this.stockAdjustmentsService.create(dto, user.id, user.role);
   }
@@ -56,7 +56,7 @@ export class InventoryController {
 
   @Post('wastage')
   @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'MANAGER', 'STOREKEEPER', 'BARTENDER')
+  @Roles('ADMIN', 'MANAGER', 'BARTENDER')
   createWastage(@Body() dto: CreateWastageDto, @CurrentUser() user: any) {
     return this.wastageService.create(dto, user.id);
   }

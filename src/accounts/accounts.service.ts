@@ -35,12 +35,17 @@ export class AccountsService {
     const partner = await this.prisma.partner.findUnique({ where: { id: dto.partnerId } });
     if (!partner) throw new NotFoundException('Partner not found');
 
+    if (dto.stockValue != null && dto.stockValue > dto.amount) {
+      throw new BadRequestException('Stock value cannot be more than the total amount');
+    }
+
     const txn = await this.prisma.capitalTransaction.create({
       data: {
         partnerId: dto.partnerId,
         transactionType: dto.transactionType,
         description: dto.description,
         amount: dto.amount,
+        stockValue: dto.stockValue,
         transactionDate: dto.transactionDate ? new Date(dto.transactionDate) : undefined,
         createdById: actorId,
       },
@@ -51,7 +56,7 @@ export class AccountsService {
       action: 'CREATE_CAPITAL_TRANSACTION',
       entityType: 'CapitalTransaction',
       entityId: txn.id,
-      newValues: dto,
+      newValues: { ...dto, partnerName: partner.name },
     });
 
     return txn;

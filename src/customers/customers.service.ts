@@ -138,7 +138,7 @@ export class CustomersService {
   }
 
   async recordPayment(id: string, amount: number, actorId: string, description?: string) {
-    await this.findOne(id);
+    const customer = await this.findOne(id);
     const txn = await this.prisma.customerTransaction.create({
       data: { customerId: id, transactionType: 'PAYMENT', amount, description },
     });
@@ -147,7 +147,7 @@ export class CustomersService {
       action: 'CUSTOMER_PAYMENT',
       entityType: 'Customer',
       entityId: id,
-      newValues: { amount, description },
+      newValues: { amount, description, customerName: customer.name },
     });
     return txn;
   }

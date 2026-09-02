@@ -21,3 +21,11 @@ export class UpdateProductDto {
   @IsOptional() @IsBoolean() tracksEmptyBottles?: boolean;
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
+
+export class DeactivateProductDto {
+  @IsString() @IsNotEmpty() reason: string;
+}
+
+export class DeleteProductDto {
+  @IsString() @IsNotEmpty() reason: string;
+}

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -28,5 +28,10 @@ export class DashboardController {
   @Get('cash')
   cash() {
     return this.dashboardService.cash();
+  }
+
+  @Get('monthly')
+  monthly(@Query('months') months?: string) {
+    return this.dashboardService.monthly(months ? Number(months) : undefined);
   }
 }

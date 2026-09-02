@@ -11,6 +11,11 @@ export class CreateCapitalTransactionDto {
   @IsEnum(CapitalTransactionType) transactionType: CapitalTransactionType;
   @IsString() @IsNotEmpty() description: string;
   @IsNumber() @Min(0.01) amount: number;
+  // Portion of `amount` that was specifically stock/inventory purchases, as
+  // opposed to rent, fuel, fixtures, deposits, etc. Matches the extra
+  // column on the paper capital account sheet. Optional - leave it out when
+  // the whole amount is non-stock, or the split isn't known.
+  @IsOptional() @IsNumber() @Min(0) stockValue?: number;
   @IsOptional() @IsString() transactionDate?: string;
 }
 

@@ -32,7 +32,7 @@ export class SalesService {
       },
       include: {
         items: { include: { product: true } },
-        payments: true,
+        payments: { include: { customer: true } },
         customer: true,
         user: { select: { id: true, name: true } },
       },
@@ -45,7 +45,7 @@ export class SalesService {
       where: { id },
       include: {
         items: { include: { product: true, unit: true } },
-        payments: true,
+        payments: { include: { customer: true } },
         customer: true,
         user: { select: { id: true, name: true } },
       },
@@ -60,12 +60,6 @@ export class SalesService {
     return `INV-${datePart}-${String(count + 1).padStart(5, '0')}`;
   }
 
-  /**
-   * A sale is one atomic transaction (design doc section 27):
-   *   Create sale -> create items -> validate stock -> decrease inventory ->
-   *   create payment records -> update cash/mobile/bank/credit -> audit log.
-   * Stock can never go negative; if any item is short, the whole sale rolls back.
-   */
   async create(dto: CreateSaleDto, actorId: string, actorRole: string) {
     return this.prisma.$transaction(async (tx) => {
       const items = dto.items ?? [];
@@ -85,47 +79,61 @@ export class SalesService {
       const total = subtotal - discount + tax;
 
       const paidTotal = dto.payments.reduce((sum, p) => sum + p.amount, 0);
-      const creditPortion = dto.payments.find((p) => p.paymentMethod === 'CREDIT')?.amount ?? 0;
+      const creditPayments = dto.payments.filter((p) => p.paymentMethod === 'CREDIT');
+      const creditPortion = creditPayments.reduce((sum, p) => sum + p.amount, 0);
       const nonCreditPaid = paidTotal - creditPortion;
 
-      if (creditPortion > 0 && !dto.customerId) {
-        throw new BadRequestException('Credit sales require a customer');
+      // Every CREDIT payment line needs a customer - either its own
+      // customerId, or (for backward compatibility with older clients that
+      // only ever sent one) the sale-level customerId. This is what allows
+      // several CREDIT lines on one sale to be billed to different people.
+      const resolvedCreditPayments = creditPayments.map((p) => ({
+        ...p,
+        customerId: p.customerId ?? dto.customerId,
+      }));
+      if (resolvedCreditPayments.some((p) => !p.customerId)) {
+        throw new BadRequestException('Every credit payment line requires a customer');
       }
+
       if (paidTotal < total - 0.01) {
         throw new BadRequestException(`Payments (${paidTotal}) do not cover the sale total (${total})`);
       }
 
-      if (creditPortion > 0 && dto.customerId) {
-        await this.customersService.assertWithinCreditLimit(dto.customerId, creditPortion);
+      // Credit limits are per customer, so if two lines happen to credit the
+      // same customer, check the combined amount against their limit once.
+      const creditByCustomer = new Map<string, number>();
+      for (const p of resolvedCreditPayments) {
+        creditByCustomer.set(p.customerId!, (creditByCustomer.get(p.customerId!) ?? 0) + p.amount);
+      }
+      for (const [custId, amount] of creditByCustomer) {
+        await this.customersService.assertWithinCreditLimit(custId, amount);
       }
 
-      // Validate stock for every line BEFORE decreasing anything, so a
-      // shortage on item 3 doesn't leave items 1-2 already decremented.
-      // Skipped entirely for item-less (manualTotal) bills - there's no
-      // stock effect to validate.
-      // NOTE for backdated sales: this checks CURRENT total stock, not stock
-      // as it stood on the backdated date. Entering a past sale still keeps
-      // today's running total correct (it posts a real ledger entry), but if
-      // stock has since been sold below what was available on that past day,
-      // this can't detect that - there's no point-in-time stock check here.
+      // --- IMPROVED STOCK VALIDATION ---
+      // Evaluate ALL items before failing. Collect all shortages into an array
+      // so the cashier can see everything they need to fix at once.
+      const missingStockItems: string[] = [];
+
       for (const item of items) {
         const unit = await tx.productUnit.findUniqueOrThrow({ where: { id: item.unitId } });
+        const product = await tx.product.findUniqueOrThrow({ where: { id: item.productId } });
         const requiredBase = item.quantity * Number(unit.quantityInBaseUnit);
-        await this.inventoryService.assertSufficientStock(item.productId, requiredBase, tx as any);
+        const current = await this.inventoryService.getCurrentStock(item.productId, tx as any);
+
+        if (current < requiredBase) {
+          missingStockItems.push(`"${product.name}" (have ${current}, need ${requiredBase})`);
+        }
       }
+
+      if (missingStockItems.length > 0) {
+        throw new BadRequestException(
+          `Insufficient stock for: ${missingStockItems.join(', ')}`,
+        );
+      }
+      // ---------------------------------
 
       const invoiceNumber = await this.generateInvoiceNumber(tx);
 
-      // A sale is "backdated" when a past saleDate was explicitly given.
-      // Backdated sales don't attach to today's open cash session - that
-      // cash wasn't actually counted in today's till, so pulling it in
-      // would corrupt today's reconciliation. They also post their
-      // inventory ledger entries as of that past date, not "now", so
-      // day-scoped reports (Sales list, Product sales, the daily sheet)
-      // show them on the day they belong to.
-      // "Today" in the business's local timezone (not the server's), so a
-      // sale entered as today's date is never mistakenly treated as
-      // backdated just because the server clock disagrees.
       const todayLocalStr = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const resolvedSaleDate = dto.saleDate ? localStartOfDay(dto.saleDate) : new Date();
       const isBackdated = !!dto.saleDate && dto.saleDate !== todayLocalStr;
@@ -134,11 +142,17 @@ export class SalesService {
         ? null
         : await tx.cashSession.findFirst({ where: { userId: actorId, status: 'OPEN' } });
 
+      // "Primary" customer on the Sale record itself - kept for backward
+      // compatibility (filtering sales by customer, the Sale.customer
+      // relation shown in sale lists) - resolved from dto.customerId, or
+      // else the first credited customer if this is a multi-customer sale.
+      const primaryCustomerId = dto.customerId ?? resolvedCreditPayments[0]?.customerId;
+
       const sale = await tx.sale.create({
         data: {
           invoiceNumber,
           userId: actorId,
-          customerId: dto.customerId,
+          customerId: primaryCustomerId,
           cashSessionId: cashSession?.id,
           saleDate: resolvedSaleDate,
           subtotal,
@@ -163,6 +177,8 @@ export class SalesService {
               paymentMethod: p.paymentMethod,
               amount: p.amount,
               reference: p.reference,
+              customerId: p.paymentMethod === 'CREDIT' ? p.customerId ?? dto.customerId : undefined,
+              comment: p.comment,
               paidAt: resolvedSaleDate,
               createdById: actorId,
             })),
@@ -171,7 +187,6 @@ export class SalesService {
         include: { items: true, payments: true },
       });
 
-      // Decrease inventory for every line item (no-op for item-less bills).
       for (const item of items) {
         await this.inventoryService.recordMovement(
           {
@@ -189,8 +204,6 @@ export class SalesService {
         );
       }
 
-      // Cash session ledger entry for the cash-equivalent portion actually
-      // received into the till/mobile-money/bank right now.
       if (cashSession && nonCreditPaid > 0) {
         const cashPortion = dto.payments
           .filter((p) => p.paymentMethod === 'CASH')
@@ -211,38 +224,88 @@ export class SalesService {
         }
       }
 
-      // Customer credit ledger for the credit portion.
-      if (creditPortion > 0 && dto.customerId) {
-        await tx.customerTransaction.create({
-          data: {
-            customerId: dto.customerId,
-            transactionType: 'CREDIT_SALE',
-            amount: creditPortion,
-            referenceType: 'SALE',
-            referenceId: sale.id,
-            saleId: sale.id,
-            description: `Credit sale ${invoiceNumber}`,
-          },
+      // One CustomerTransaction per credited customer - this is what makes
+      // one sale billable to several tabs at once instead of just one.
+      let creditedCustomers: { id: string; name: string; amount: number }[] = [];
+      if (creditByCustomer.size > 0) {
+        const custRecords = await tx.customer.findMany({
+          where: { id: { in: [...creditByCustomer.keys()] } },
+          select: { id: true, name: true },
         });
+        const nameById = new Map(custRecords.map((c) => [c.id, c.name]));
+        creditedCustomers = [...creditByCustomer.entries()].map(([id, amount]) => ({
+          id,
+          name: nameById.get(id) ?? 'Unknown customer',
+          amount,
+        }));
+
+        for (const p of resolvedCreditPayments) {
+          const comment = p.comment ? ` — ${p.comment}` : '';
+          await tx.customerTransaction.create({
+            data: {
+              customerId: p.customerId!,
+              transactionType: 'CREDIT_SALE',
+              amount: p.amount,
+              referenceType: 'SALE',
+              referenceId: sale.id,
+              saleId: sale.id,
+              description: `Credit sale ${invoiceNumber}${comment}`,
+            },
+          });
+        }
       }
+
+      // Rich snapshot for the Activity log: exact products sold, exact
+      // customer(s) credited and for how much, and the full payment
+      // breakdown - so a manager can see what happened without having to
+      // dig into the live Sale record.
+      const productNames = items.length
+        ? new Map(
+            (
+              await tx.product.findMany({ where: { id: { in: items.map((i) => i.productId) } }, select: { id: true, name: true } })
+            ).map((p) => [p.id, p.name]),
+          )
+        : new Map<string, string>();
+      const unitNames = items.length
+        ? new Map(
+            (
+              await tx.productUnit.findMany({ where: { id: { in: items.map((i) => i.unitId) } }, select: { id: true, name: true } })
+            ).map((u) => [u.id, u.name]),
+          )
+        : new Map<string, string>();
 
       await this.auditService.log({
         userId: actorId,
         action: 'CREATE_SALE',
         entityType: 'Sale',
         entityId: sale.id,
-        newValues: { total, invoiceNumber, itemCount: items.length, isFreeformBill: !hasItems },
+        newValues: {
+          total,
+          invoiceNumber,
+          itemCount: items.length,
+          isFreeformBill: !hasItems,
+          items: items.map((i) => ({
+            product: productNames.get(i.productId) ?? 'Unknown product',
+            unit: unitNames.get(i.unitId),
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            total: i.quantity * i.unitPrice - (i.discount ?? 0),
+          })),
+          customerName: creditedCustomers[0]?.name,
+          customers: creditedCustomers,
+          payments: dto.payments.map((p) => ({
+            paymentMethod: p.paymentMethod,
+            amount: p.amount,
+            customerName: p.paymentMethod === 'CREDIT' ? creditedCustomers.find((c) => c.id === (p.customerId ?? dto.customerId))?.name : undefined,
+            comment: p.comment,
+          })),
+        },
       });
 
       return sale;
     });
   }
 
-  /**
-   * Voiding never deletes the sale - it reverses inventory and reopens the
-   * financial trail via new (reversing) ledger entries, and the sale row is
-   * kept with status=VOIDED for a full audit trail (design doc section 17/26).
-   */
   async void(id: string, dto: VoidSaleDto, actorId: string, actorRole: string) {
     if (actorRole === 'CASHIER' || actorRole === 'BARTENDER') {
       throw new BadRequestException('Cashiers/bartenders cannot void sales - manager approval required');
@@ -255,7 +318,6 @@ export class SalesService {
 
       await tx.sale.update({ where: { id }, data: { status: 'VOIDED', voidReason: dto.reason } });
 
-      // Reverse inventory: put stock back (RETURN-style ADJUSTMENT movement).
       for (const item of sale.items) {
         await this.inventoryService.recordMovement(
           {
@@ -290,16 +352,36 @@ export class SalesService {
         }
       }
 
-      if (sale.customerId) {
-        const creditPaid = sale.payments
-          .filter((p) => p.paymentMethod === 'CREDIT')
-          .reduce((s, p) => s + Number(p.amount), 0);
-        if (creditPaid > 0) {
+      // Reverse CREDIT per payment line's own customer - a voided sale that
+      // had several customers credited needs each of their tabs adjusted
+      // back individually, not just the sale's single "primary" customer.
+      const creditByCustomer = new Map<string, number>();
+      for (const p of sale.payments) {
+        if (p.paymentMethod !== 'CREDIT') continue;
+        const custId = p.customerId ?? sale.customerId;
+        if (!custId) continue;
+        creditByCustomer.set(custId, (creditByCustomer.get(custId) ?? 0) + Number(p.amount));
+      }
+
+      let reversedCustomers: { id: string; name: string; amount: number }[] = [];
+      if (creditByCustomer.size > 0) {
+        const custRecords = await tx.customer.findMany({
+          where: { id: { in: [...creditByCustomer.keys()] } },
+          select: { id: true, name: true },
+        });
+        const nameById = new Map(custRecords.map((c) => [c.id, c.name]));
+        reversedCustomers = [...creditByCustomer.entries()].map(([custId, amount]) => ({
+          id: custId,
+          name: nameById.get(custId) ?? 'Unknown customer',
+          amount,
+        }));
+
+        for (const [custId, amount] of creditByCustomer) {
           await tx.customerTransaction.create({
             data: {
-              customerId: sale.customerId,
+              customerId: custId,
               transactionType: 'ADJUSTMENT',
-              amount: -creditPaid,
+              amount: -amount,
               referenceType: 'SALE',
               referenceId: sale.id,
               saleId: sale.id,
@@ -309,12 +391,31 @@ export class SalesService {
         }
       }
 
+      const productNames = sale.items.length
+        ? new Map(
+            (
+              await tx.product.findMany({ where: { id: { in: sale.items.map((i) => i.productId) } }, select: { id: true, name: true } })
+            ).map((p) => [p.id, p.name]),
+          )
+        : new Map<string, string>();
+
       await this.auditService.log({
         userId: actorId,
         action: 'VOID_SALE',
         entityType: 'Sale',
         entityId: id,
-        newValues: { reason: dto.reason },
+        newValues: {
+          reason: dto.reason,
+          total: Number(sale.total),
+          invoiceNumber: sale.invoiceNumber,
+          items: sale.items.map((i) => ({
+            product: productNames.get(i.productId) ?? 'Unknown product',
+            quantity: Number(i.quantity),
+            total: Number(i.total),
+          })),
+          customerName: reversedCustomers[0]?.name,
+          customers: reversedCustomers,
+        },
       });
 
       return tx.sale.findUnique({ where: { id }, include: { items: true, payments: true } });
