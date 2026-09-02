@@ -21,11 +21,13 @@ import { ReportsModule } from './reports/reports.module';
 import { EmptyBottlesModule } from './empty-bottles/empty-bottles.module';
 import { ExportsModule } from './exports/exports.module';
 import { AccountsModule } from './accounts/accounts.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
+    HealthModule,
     AuthModule,
     UsersModule,
     RolesModule,
