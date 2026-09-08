@@ -51,8 +51,14 @@ export class ReportsController {
   }
 
   @Get('customer-credit')
-  customerCredit() {
-    return this.reportsService.customerCredit();
+  customerCredit(@Query('customerIds') customerIds?: string) {
+    const ids = customerIds ? customerIds.split(',').filter(Boolean) : undefined;
+    return this.reportsService.customerCredit(ids);
+  }
+
+  @Get('bills')
+  bills(@Query('date') date: string) {
+    return this.reportsService.bills(date ?? new Date().toISOString().slice(0, 10));
   }
 
   @Get('supplier-credit')

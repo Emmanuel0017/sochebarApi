@@ -232,9 +232,23 @@ export class ReportsService {
   }
 
   // ---------------- Credit report (customers) ----------------
-  async customerCredit() {
-    const customers = await this.prisma.customer.findMany();
-    const results: Array<{ customer: string; creditSales: number; payments: number; outstanding: number }> = [];
+  // With no customerIds given, returns every customer who has ever had
+  // credit activity (the usual "who owes what" report). When customerIds
+  // IS given (a manager picking specific customers to export), every named
+  // customer is returned regardless of balance, since that's an explicit
+  // selection rather than a "who's outstanding" filter.
+  async customerCredit(customerIds?: string[]) {
+    const customers = await this.prisma.customer.findMany({
+      where: customerIds?.length ? { id: { in: customerIds } } : undefined,
+    });
+    const results: Array<{
+      customerId: string;
+      customer: string;
+      phone: string | null;
+      creditSales: number;
+      payments: number;
+      outstanding: number;
+    }> = [];
     for (const c of customers) {
       const agg = await this.prisma.customerTransaction.groupBy({
         by: ['transactionType'],
@@ -244,9 +258,65 @@ export class ReportsService {
       const sum = (t: string) => Number(agg.find((a) => a.transactionType === t)?._sum.amount ?? 0);
       const creditSales = sum('CREDIT_SALE');
       const payments = sum('PAYMENT');
-      results.push({ customer: c.name, creditSales, payments, outstanding: creditSales - payments });
+      const adjustments = sum('ADJUSTMENT');
+      results.push({
+        customerId: c.id,
+        customer: c.name,
+        phone: c.phone,
+        creditSales,
+        payments,
+        outstanding: creditSales - payments + adjustments,
+      });
     }
+    if (customerIds?.length) return results;
     return results.filter((r) => r.creditSales !== 0 || r.outstanding !== 0);
+  }
+
+  // ---------------- Bills report (customer credit bills, by day) ----------------
+  // "Bills" = credit sales (Sale rows carrying a CREDIT payment line),
+  // consistent with how the daily sheet already defines a bill. Given a
+  // date, returns that day's individual bills plus two totals: the day's
+  // own sum, and a running cumulative sum of every bill ever recorded from
+  // the beginning up to and including that day - so a manager can see both
+  // "what came in today" and "the total tab run up to today" at a glance.
+  async bills(date: string) {
+    const { gte: dayStart, lte: dayEnd } = localDayBounds(date);
+
+    const daySales = await this.prisma.sale.findMany({
+      where: {
+        saleDate: { gte: dayStart, lte: dayEnd },
+        status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+        payments: { some: { paymentMethod: 'CREDIT' } },
+      },
+      include: { payments: { where: { paymentMethod: 'CREDIT' } }, customer: true },
+      orderBy: { saleDate: 'asc' },
+    });
+
+    const bills = daySales.flatMap((s) =>
+      s.payments.map((p) => ({
+        id: p.id,
+        saleId: s.id,
+        invoiceNumber: s.invoiceNumber,
+        customerId: s.customer?.id ?? p.customerId ?? null,
+        customerName: s.customer?.name ?? 'Unknown',
+        amount: Number(p.amount),
+        comment: p.comment ?? null,
+        recordedAt: s.saleDate,
+      })),
+    );
+
+    const dayTotal = bills.reduce((s, b) => s + b.amount, 0);
+
+    // Cumulative = every credit-sale bill from the beginning of records
+    // through the end of the selected day, regardless of whether it's been
+    // paid off since - a running total of bills raised, not outstanding.
+    const cumulativeAgg = await this.prisma.customerTransaction.aggregate({
+      where: { transactionType: 'CREDIT_SALE', createdAt: { lte: dayEnd } },
+      _sum: { amount: true },
+    });
+    const cumulativeTotal = Number(cumulativeAgg._sum.amount ?? 0);
+
+    return { date, bills, dayTotal, cumulativeTotal };
   }
 
   // ---------------- Supplier debt report ----------------

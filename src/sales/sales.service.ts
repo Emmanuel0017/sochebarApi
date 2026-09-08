@@ -250,6 +250,11 @@ export class SalesService {
               referenceId: sale.id,
               saleId: sale.id,
               description: `Credit sale ${invoiceNumber}${comment}`,
+              // Bill date follows the sale's own date (which may be
+              // backdated via dto.saleDate) rather than the moment this
+              // record happens to be inserted, so a bill entered late for
+              // an earlier day still shows and filters under that day.
+              createdAt: resolvedSaleDate,
             },
           });
         }
