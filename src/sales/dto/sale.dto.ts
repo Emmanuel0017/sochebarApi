@@ -41,6 +41,8 @@ export class CreateSaleDto {
   // (e.g. an informal running tab) doesn't have to itemize products - see
   // manualTotal below. When items ARE given, they behave exactly like a POS
   // sale: stock is validated and decremented per line.
+  @IsOptional() @IsString() clientSaleId?: string;
+  
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SaleItemDto)
   items?: SaleItemDto[];
 

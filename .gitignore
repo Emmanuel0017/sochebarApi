@@ -46,3 +46,5 @@ scripts/
 .neon
 prisma/migrations/20260901000000_multi_customer_credit_and_capital_usage/migration.sql
 backup.sql
+
+local-data/

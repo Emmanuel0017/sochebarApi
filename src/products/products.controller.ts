@@ -7,7 +7,7 @@ import { ProductsService } from './products.service';
 import { CreateProductDto, DeactivateProductDto, DeleteProductDto, UpdateProductDto } from './dto/product.dto';
 
 @Controller('products')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ProductsController {
   constructor(private productsService: ProductsService) {}
 

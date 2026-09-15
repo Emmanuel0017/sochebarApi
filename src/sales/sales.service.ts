@@ -55,13 +55,22 @@ export class SalesService {
   }
 
   private async generateInvoiceNumber(tx: any): Promise<string> {
-    const count = await tx.sale.count();
-    const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    return `INV-${datePart}-${String(count + 1).padStart(5, '0')}`;
-  }
+  const result = await tx.$queryRaw<{ nextval: bigint }[]>`SELECT nextval('sales_invoice_seq')`;
+  const seq = result[0].nextval;
+  const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return `INV-${datePart}-${String(seq).padStart(5, '0')}`;
+}
 
   async create(dto: CreateSaleDto, actorId: string, actorRole: string) {
-    return this.prisma.$transaction(async (tx) => {
+  return this.prisma.$transaction(async (tx) => {
+    if (dto.clientSaleId) {
+      const existing = await tx.sale.findUnique({
+        where: { clientSaleId: dto.clientSaleId },
+        include: { items: true, payments: true },
+      });
+      if (existing) return existing;
+    }
+
       const items = dto.items ?? [];
       const hasItems = items.length > 0;
 

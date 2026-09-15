@@ -14,7 +14,7 @@ import {
 } from './dto/accounts.dto';
 
 @Controller('accounts')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class AccountsController {
   constructor(private accountsService: AccountsService) {}
 

@@ -7,7 +7,7 @@ import { SalesService } from './sales.service';
 import { CreateSaleDto, VoidSaleDto } from './dto/sale.dto';
 
 @Controller('sales')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class SalesController {
   constructor(private salesService: SalesService) {}
 

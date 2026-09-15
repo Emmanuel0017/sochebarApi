@@ -1,11 +1,12 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CashService } from './cash.service';
 import { CloseSessionDto, CreateCashTransactionDto, OpenSessionDto } from './dto/cash.dto';
 
 @Controller('cash')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class CashController {
   constructor(private cashService: CashService) {}
 

@@ -7,7 +7,7 @@ import { PricesService } from './prices.service';
 import { CreatePriceDto, UpdatePriceDto } from './dto/price.dto';
 
 @Controller('products/:productId/prices')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PricesController {
   constructor(private pricesService: PricesService) {}
 
@@ -25,7 +25,7 @@ export class PricesController {
 }
 
 @Controller('prices')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PricesUpdateController {
   constructor(private pricesService: PricesService) {}
 

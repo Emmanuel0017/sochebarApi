@@ -7,7 +7,7 @@ import { PurchasesService } from './purchases.service';
 import { CreatePurchaseDto } from './dto/purchase.dto';
 
 @Controller('purchases')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class PurchasesController {
   constructor(private purchasesService: PurchasesService) {}
 

@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { IdempotencyInterceptor } from './common/interceptors/idempotency.interceptor';
+import { SyncOutboxInterceptor } from './common/interceptors/sync-outbox.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -22,6 +25,7 @@ import { EmptyBottlesModule } from './empty-bottles/empty-bottles.module';
 import { ExportsModule } from './exports/exports.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { HealthModule } from './health/health.module';
+import { SyncModule } from './sync/sync.module';
 
 @Module({
   imports: [
@@ -48,6 +52,17 @@ import { HealthModule } from './health/health.module';
     EmptyBottlesModule,
     ExportsModule,
     AccountsModule,
+    SyncModule,
+  ],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: IdempotencyInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: SyncOutboxInterceptor,
+    },
   ],
 })
 export class AppModule {}

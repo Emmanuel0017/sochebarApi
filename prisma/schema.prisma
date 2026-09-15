@@ -8,6 +8,50 @@ datasource db {
 }
 
 // ============================================================
+// OFFLINE SYNC
+// ============================================================
+
+// Generic idempotency store. The frontend attaches an `Idempotency-Key`
+// header (a client-generated UUID, persisted in its local offline queue)
+// to every mutating request. If a request with the same key is replayed
+// (e.g. after reconnecting from offline, or a retried request whose
+// response never reached the client), we return the original response
+// instead of executing the write twice. Keyed on method+path+key so the
+// same key can't accidentally collide across unrelated endpoints.
+model IdempotencyKey {
+  id         String   @id @default(uuid())
+  key        String
+  method     String
+  path       String
+  statusCode Int
+  response   Json
+  createdAt  DateTime @default(now())
+
+  @@unique([key, method, path])
+  @@index([createdAt])
+  @@map("idempotency_keys")
+}
+
+// Every successful mutating request the LOCAL/offline app handles gets
+// logged here — never written to on Render (there's nothing local to
+// push from there). The sync job in the local app's bootstrap-local.ts
+// replays these against Render in createdAt order, reusing the same
+// idempotencyKey as the header value, so a request that gets pushed
+// twice for any reason is a no-op on Render rather than a duplicate.
+model SyncOutbox {
+  id             String    @id // = the request's own Idempotency-Key
+  method         String
+  path           String
+  body           Json
+  createdAt      DateTime  @default(now())
+  pushedAt       DateTime?
+  lastError      String?
+
+  @@index([pushedAt])
+  @@map("sync_outbox")
+}
+
+// ============================================================
 // ENUMS
 // ============================================================
 
@@ -17,6 +61,12 @@ enum RoleName {
   CASHIER
   BARTENDER
   STOREKEEPER
+  // Read-only account for the owner's login on Render — blocked from
+  // every mutating request by RolesGuard regardless of route.
+  VIEWER
+  // Non-human account the local/offline app's sync job authenticates as
+  // when pushing queued changes up to Render. Never used by a person.
+  SYNC_DEVICE
 }
 
 enum PriceType {
@@ -392,6 +442,7 @@ model Wastage {
 model Sale {
   id             String     @id @default(uuid())
   invoiceNumber  String     @unique
+  clientSaleId   String?    @unique
   userId         String
   user           User       @relation(fields: [userId], references: [id])
   customerId     String?

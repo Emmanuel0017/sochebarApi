@@ -9,7 +9,7 @@ import { WastageService } from './wastage.service';
 import { CreateStockAdjustmentDto, CreateWastageDto } from './dto/inventory.dto';
 
 @Controller('inventory')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class InventoryController {
   constructor(
     private inventoryService: InventoryService,

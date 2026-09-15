@@ -7,7 +7,7 @@ import { EmptyBottlesService } from './empty-bottles.service';
 import { RecordEmptyBottleDto } from './dto/empty-bottle.dto';
 
 @Controller('empty-bottles')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class EmptyBottlesController {
   constructor(private emptyBottlesService: EmptyBottlesService) {}
 

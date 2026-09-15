@@ -7,7 +7,7 @@ import { ExpensesService } from './expenses.service';
 import { CreateExpenseCategoryDto, CreateExpenseDto, UpdateExpenseDto } from './dto/expense.dto';
 
 @Controller('expenses')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ExpensesController {
   constructor(private expensesService: ExpensesService) {}
 
