@@ -5,13 +5,28 @@ const prisma = new PrismaClient();
 
 async function main() {
   // ---------------- Roles ----------------
-  const roleNames = ['ADMIN', 'MANAGER', 'CASHIER', 'BARTENDER', 'STOREKEEPER'] as const;
+  const roleSeeds = [
+    { name: 'ADMIN', description: 'ADMIN role' },
+    { name: 'MANAGER', description: 'MANAGER role' },
+    { name: 'CASHIER', description: 'CASHIER role' },
+    { name: 'BARTENDER', description: 'BARTENDER role' },
+    { name: 'STOREKEEPER', description: 'STOREKEEPER role' },
+    {
+      name: 'VIEWER',
+      description: 'Read-only access. Blocked from every mutating request by RolesGuard.',
+    },
+    {
+      name: 'SYNC_DEVICE',
+      description:
+        'Machine account used by the offline desktop app to push queued changes. Not for people.',
+    },
+  ] as const;
   const roles: Record<string, string> = {};
-  for (const name of roleNames) {
+  for (const { name, description } of roleSeeds) {
     const role = await prisma.role.upsert({
       where: { name },
       update: {},
-      create: { name, description: `${name} role` },
+      create: { name, description },
     });
     roles[name] = role.id;
   }
