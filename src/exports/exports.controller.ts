@@ -3,12 +3,13 @@ import type { Response } from 'express';
 import type * as ExcelJS from 'exceljs';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
 import { ExportsService } from './exports.service';
 
+// No @Roles() here on purpose — see DashboardController for the reasoning.
+// Every route below is a GET that streams a file; VIEWER needs this
+// specifically (owner asked to "view everything ... and export files").
 @Controller('exports')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'MANAGER')
 export class ExportsController {
   constructor(private exportsService: ExportsService) {}
 
